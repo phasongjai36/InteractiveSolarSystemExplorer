@@ -8,12 +8,21 @@ interface Planet {
   distanceFromSun: number; // in million km
   orbitalPeriod: number; // in Earth days
   color: string;
+  lightColor: string; // Precomputed lighter shade for gradient highlights
   speed: number; // animation speed multiplier
   description: string;
   emoji: string;
 }
 
-const planets: Planet[] = [
+function lightenColor(hex: string, percent: number): string {
+  const num = parseInt(hex.replace('#', ''), 16);
+  const r = Math.min(255, (num >> 16) + percent);
+  const g = Math.min(255, ((num >> 8) & 0x00ff) + percent);
+  const b = Math.min(255, (num & 0x0000ff) + percent);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+}
+
+const rawPlanets = [
   {
     name: 'Mercury',
     radius: 4,
@@ -112,8 +121,15 @@ const planets: Planet[] = [
   },
 ];
 
+// Precompute lighter color shades once to avoid string parsing on every 60 FPS frame
+const planets: Planet[] = rawPlanets.map((p) => ({
+  ...p,
+  lightColor: lightenColor(p.color, 40),
+}));
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const starsCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationRef = useRef<number>(0);
   const timeRef = useRef<number>(0);
   const [isPlaying, setIsPlaying] = useState(true);
@@ -134,6 +150,31 @@ export default function App() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // Pre-render static background star field offscreen whenever canvasSize changes.
+  // Performance optimization: Eliminates 200 individual arc/fill draw calls per frame in the animation loop.
+  useEffect(() => {
+    const offscreen = document.createElement('canvas');
+    offscreen.width = canvasSize.width;
+    offscreen.height = canvasSize.height;
+    const offCtx = offscreen.getContext('2d');
+    if (offCtx) {
+      offCtx.fillStyle = '#0a0a1a';
+      offCtx.fillRect(0, 0, canvasSize.width, canvasSize.height);
+
+      const starSeed = 42;
+      for (let i = 0; i < 200; i++) {
+        const sx = (starSeed * (i + 1) * 7919) % canvasSize.width;
+        const sy = (starSeed * (i + 1) * 6271) % canvasSize.height;
+        const brightness = 0.3 + ((i * 31) % 70) / 100;
+        offCtx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
+        offCtx.beginPath();
+        offCtx.arc(sx, sy, 0.5 + (i % 3) * 0.5, 0, Math.PI * 2);
+        offCtx.fill();
+      }
+    }
+    starsCanvasRef.current = offscreen;
+  }, [canvasSize]);
 
   const getScale = useCallback(() => {
     return canvasSize.width / 900;
@@ -156,20 +197,12 @@ export default function App() {
     const centerX = canvasSize.width / 2;
     const centerY = canvasSize.height / 2;
 
-    // Clear canvas
-    ctx.fillStyle = '#0a0a1a';
-    ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
-
-    // Draw stars
-    const starSeed = 42;
-    for (let i = 0; i < 200; i++) {
-      const sx = ((starSeed * (i + 1) * 7919) % canvasSize.width);
-      const sy = ((starSeed * (i + 1) * 6271) % canvasSize.height);
-      const brightness = 0.3 + ((i * 31) % 70) / 100;
-      ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
-      ctx.beginPath();
-      ctx.arc(sx, sy, 0.5 + (i % 3) * 0.5, 0, Math.PI * 2);
-      ctx.fill();
+    // Draw pre-rendered background star field (1 drawImage call vs 200+ draw commands)
+    if (starsCanvasRef.current) {
+      ctx.drawImage(starsCanvasRef.current, 0, 0);
+    } else {
+      ctx.fillStyle = '#0a0a1a';
+      ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
     }
 
     // Draw orbit paths
@@ -226,7 +259,7 @@ export default function App() {
         ctx.fill();
       }
 
-      // Planet body
+      // Planet body (uses precomputed lightColor shade)
       const planetGrad = ctx.createRadialGradient(
         pos.x - planetRadius * 0.3,
         pos.y - planetRadius * 0.3,
@@ -235,7 +268,7 @@ export default function App() {
         pos.y,
         planetRadius
       );
-      planetGrad.addColorStop(0, lightenColor(planet.color, 40));
+      planetGrad.addColorStop(0, planet.lightColor);
       planetGrad.addColorStop(1, planet.color);
       ctx.fillStyle = planetGrad;
       ctx.beginPath();
@@ -371,7 +404,7 @@ export default function App() {
                 <div
                   className="w-12 h-12 rounded-full shadow-lg"
                   style={{
-                    background: `radial-gradient(circle at 30% 30%, ${lightenColor(selectedPlanet.color, 40)}, ${selectedPlanet.color})`,
+                    background: `radial-gradient(circle at 30% 30%, ${selectedPlanet.lightColor}, ${selectedPlanet.color})`,
                   }}
                 />
                 <div>
@@ -500,12 +533,4 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       <span className="text-white text-sm font-medium">{value}</span>
     </div>
   );
-}
-
-function lightenColor(hex: string, percent: number): string {
-  const num = parseInt(hex.replace('#', ''), 16);
-  const r = Math.min(255, (num >> 16) + percent);
-  const g = Math.min(255, ((num >> 8) & 0x00ff) + percent);
-  const b = Math.min(255, (num & 0x0000ff) + percent);
-  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
 }
