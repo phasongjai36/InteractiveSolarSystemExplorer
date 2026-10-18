@@ -8,12 +8,13 @@ interface Planet {
   distanceFromSun: number; // in million km
   orbitalPeriod: number; // in Earth days
   color: string;
+  lightenedColor: string; // pre-computed lightened color for rendering
   speed: number; // animation speed multiplier
   description: string;
   emoji: string;
 }
 
-const planets: Planet[] = [
+const rawPlanets = [
   {
     name: 'Mercury',
     radius: 4,
@@ -112,6 +113,12 @@ const planets: Planet[] = [
   },
 ];
 
+// Precompute lightened color to avoid expensive string parsing inside 60 FPS animation loop
+const planets: Planet[] = rawPlanets.map((planet) => ({
+  ...planet,
+  lightenedColor: lightenColor(planet.color, 40),
+}));
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>(0);
@@ -123,6 +130,7 @@ export default function App() {
   const planetAnglesRef = useRef<number[]>(planets.map(() => Math.random() * Math.PI * 2));
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
+  const starfieldCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Handle resize
   useEffect(() => {
@@ -134,6 +142,33 @@ export default function App() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // Pre-render static starfield background to offscreen canvas whenever canvasSize changes
+  useEffect(() => {
+    const offscreen = document.createElement('canvas');
+    offscreen.width = canvasSize.width;
+    offscreen.height = canvasSize.height;
+    const offCtx = offscreen.getContext('2d');
+    if (!offCtx) return;
+
+    // Clear background
+    offCtx.fillStyle = '#0a0a1a';
+    offCtx.fillRect(0, 0, canvasSize.width, canvasSize.height);
+
+    // Render 200 stars once
+    const starSeed = 42;
+    for (let i = 0; i < 200; i++) {
+      const sx = ((starSeed * (i + 1) * 7919) % canvasSize.width);
+      const sy = ((starSeed * (i + 1) * 6271) % canvasSize.height);
+      const brightness = 0.3 + ((i * 31) % 70) / 100;
+      offCtx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
+      offCtx.beginPath();
+      offCtx.arc(sx, sy, 0.5 + (i % 3) * 0.5, 0, Math.PI * 2);
+      offCtx.fill();
+    }
+
+    starfieldCanvasRef.current = offscreen;
+  }, [canvasSize]);
 
   const getScale = useCallback(() => {
     return canvasSize.width / 900;
@@ -156,20 +191,12 @@ export default function App() {
     const centerX = canvasSize.width / 2;
     const centerY = canvasSize.height / 2;
 
-    // Clear canvas
-    ctx.fillStyle = '#0a0a1a';
-    ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
-
-    // Draw stars
-    const starSeed = 42;
-    for (let i = 0; i < 200; i++) {
-      const sx = ((starSeed * (i + 1) * 7919) % canvasSize.width);
-      const sy = ((starSeed * (i + 1) * 6271) % canvasSize.height);
-      const brightness = 0.3 + ((i * 31) % 70) / 100;
-      ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
-      ctx.beginPath();
-      ctx.arc(sx, sy, 0.5 + (i % 3) * 0.5, 0, Math.PI * 2);
-      ctx.fill();
+    // Draw pre-rendered starfield background (replaces 200 individual star arc/fill draw calls per frame)
+    if (starfieldCanvasRef.current) {
+      ctx.drawImage(starfieldCanvasRef.current, 0, 0);
+    } else {
+      ctx.fillStyle = '#0a0a1a';
+      ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
     }
 
     // Draw orbit paths
@@ -235,7 +262,7 @@ export default function App() {
         pos.y,
         planetRadius
       );
-      planetGrad.addColorStop(0, lightenColor(planet.color, 40));
+      planetGrad.addColorStop(0, planet.lightenedColor);
       planetGrad.addColorStop(1, planet.color);
       ctx.fillStyle = planetGrad;
       ctx.beginPath();
@@ -371,7 +398,7 @@ export default function App() {
                 <div
                   className="w-12 h-12 rounded-full shadow-lg"
                   style={{
-                    background: `radial-gradient(circle at 30% 30%, ${lightenColor(selectedPlanet.color, 40)}, ${selectedPlanet.color})`,
+                    background: `radial-gradient(circle at 30% 30%, ${selectedPlanet.lightenedColor}, ${selectedPlanet.color})`,
                   }}
                 />
                 <div>
