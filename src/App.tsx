@@ -1,5 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 
+function lightenColor(hex: string, percent: number): string {
+  const num = parseInt(hex.replace('#', ''), 16);
+  const r = Math.min(255, (num >> 16) + percent);
+  const g = Math.min(255, ((num >> 8) & 0x00ff) + percent);
+  const b = Math.min(255, (num & 0x0000ff) + percent);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+}
+
 interface Planet {
   name: string;
   radius: number; // visual radius in px
@@ -8,12 +16,13 @@ interface Planet {
   distanceFromSun: number; // in million km
   orbitalPeriod: number; // in Earth days
   color: string;
+  lightenedColor: string; // precomputed lightened color for rendering performance
   speed: number; // animation speed multiplier
   description: string;
   emoji: string;
 }
 
-const planets: Planet[] = [
+const rawPlanets = [
   {
     name: 'Mercury',
     radius: 4,
@@ -112,6 +121,12 @@ const planets: Planet[] = [
   },
 ];
 
+// Precompute lightenedColor for each planet to avoid hex-string parsing on every animation frame
+const planets: Planet[] = rawPlanets.map((planet) => ({
+  ...planet,
+  lightenedColor: lightenColor(planet.color, 40),
+}));
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>(0);
@@ -123,6 +138,29 @@ export default function App() {
   const planetAnglesRef = useRef<number[]>(planets.map(() => Math.random() * Math.PI * 2));
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
+  const starsCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Optimization: Pre-render static background stars to offscreen canvas whenever canvas size changes.
+  // This replaces 200 path & fill canvas operations per animation frame (~12,000 calls/sec at 60 FPS) with 1 drawImage call.
+  useEffect(() => {
+    const offscreen = document.createElement('canvas');
+    offscreen.width = canvasSize.width;
+    offscreen.height = canvasSize.height;
+    const ctx = offscreen.getContext('2d');
+    if (ctx) {
+      const starSeed = 42;
+      for (let i = 0; i < 200; i++) {
+        const sx = (starSeed * (i + 1) * 7919) % canvasSize.width;
+        const sy = (starSeed * (i + 1) * 6271) % canvasSize.height;
+        const brightness = 0.3 + ((i * 31) % 70) / 100;
+        ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 0.5 + (i % 3) * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    starsCanvasRef.current = offscreen;
+  }, [canvasSize]);
 
   // Handle resize
   useEffect(() => {
@@ -160,16 +198,9 @@ export default function App() {
     ctx.fillStyle = '#0a0a1a';
     ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
 
-    // Draw stars
-    const starSeed = 42;
-    for (let i = 0; i < 200; i++) {
-      const sx = ((starSeed * (i + 1) * 7919) % canvasSize.width);
-      const sy = ((starSeed * (i + 1) * 6271) % canvasSize.height);
-      const brightness = 0.3 + ((i * 31) % 70) / 100;
-      ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
-      ctx.beginPath();
-      ctx.arc(sx, sy, 0.5 + (i % 3) * 0.5, 0, Math.PI * 2);
-      ctx.fill();
+    // Draw pre-rendered stars background from offscreen canvas
+    if (starsCanvasRef.current) {
+      ctx.drawImage(starsCanvasRef.current, 0, 0);
     }
 
     // Draw orbit paths
@@ -235,7 +266,7 @@ export default function App() {
         pos.y,
         planetRadius
       );
-      planetGrad.addColorStop(0, lightenColor(planet.color, 40));
+      planetGrad.addColorStop(0, planet.lightenedColor);
       planetGrad.addColorStop(1, planet.color);
       ctx.fillStyle = planetGrad;
       ctx.beginPath();
@@ -371,7 +402,7 @@ export default function App() {
                 <div
                   className="w-12 h-12 rounded-full shadow-lg"
                   style={{
-                    background: `radial-gradient(circle at 30% 30%, ${lightenColor(selectedPlanet.color, 40)}, ${selectedPlanet.color})`,
+                    background: `radial-gradient(circle at 30% 30%, ${selectedPlanet.lightenedColor}, ${selectedPlanet.color})`,
                   }}
                 />
                 <div>
@@ -502,10 +533,3 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function lightenColor(hex: string, percent: number): string {
-  const num = parseInt(hex.replace('#', ''), 16);
-  const r = Math.min(255, (num >> 16) + percent);
-  const g = Math.min(255, ((num >> 8) & 0x00ff) + percent);
-  const b = Math.min(255, (num & 0x0000ff) + percent);
-  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
-}
