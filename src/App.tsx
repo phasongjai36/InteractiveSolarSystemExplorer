@@ -8,9 +8,18 @@ interface Planet {
   distanceFromSun: number; // in million km
   orbitalPeriod: number; // in Earth days
   color: string;
+  lightColor: string; // pre-computed lightened color for gradient highlight
   speed: number; // animation speed multiplier
   description: string;
   emoji: string;
+}
+
+function lightenColor(hex: string, percent: number): string {
+  const num = parseInt(hex.replace('#', ''), 16);
+  const r = Math.min(255, (num >> 16) + percent);
+  const g = Math.min(255, ((num >> 8) & 0x00ff) + percent);
+  const b = Math.min(255, (num & 0x0000ff) + percent);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
 }
 
 const planets: Planet[] = [
@@ -22,6 +31,7 @@ const planets: Planet[] = [
     distanceFromSun: 57.9,
     orbitalPeriod: 88,
     color: '#b5b5b5',
+    lightColor: lightenColor('#b5b5b5', 40),
     speed: 4.15,
     description: 'The smallest planet and closest to the Sun. It has no atmosphere and extreme temperature variations.',
     emoji: '☿',
@@ -34,6 +44,7 @@ const planets: Planet[] = [
     distanceFromSun: 108.2,
     orbitalPeriod: 225,
     color: '#e8cda0',
+    lightColor: lightenColor('#e8cda0', 40),
     speed: 1.62,
     description: 'The hottest planet due to its thick CO₂ atmosphere. It rotates backwards compared to most planets.',
     emoji: '♀',
@@ -46,6 +57,7 @@ const planets: Planet[] = [
     distanceFromSun: 149.6,
     orbitalPeriod: 365.25,
     color: '#4da6ff',
+    lightColor: lightenColor('#4da6ff', 40),
     speed: 1.0,
     description: 'Our home planet — the only known world with liquid water on its surface and life.',
     emoji: '🌍',
@@ -58,6 +70,7 @@ const planets: Planet[] = [
     distanceFromSun: 227.9,
     orbitalPeriod: 687,
     color: '#e87d4a',
+    lightColor: lightenColor('#e87d4a', 40),
     speed: 0.53,
     description: 'The Red Planet, home to the largest volcano (Olympus Mons) and canyon in the solar system.',
     emoji: '♂',
@@ -70,6 +83,7 @@ const planets: Planet[] = [
     distanceFromSun: 778.5,
     orbitalPeriod: 4333,
     color: '#d4a574',
+    lightColor: lightenColor('#d4a574', 40),
     speed: 0.084,
     description: 'The largest planet with a Great Red Spot storm larger than Earth. It has 95 known moons.',
     emoji: '♃',
@@ -82,6 +96,7 @@ const planets: Planet[] = [
     distanceFromSun: 1434,
     orbitalPeriod: 10759,
     color: '#f0d890',
+    lightColor: lightenColor('#f0d890', 40),
     speed: 0.034,
     description: 'Famous for its spectacular ring system made of ice and rock particles. It could float in water!',
     emoji: '♄',
@@ -94,6 +109,7 @@ const planets: Planet[] = [
     distanceFromSun: 2871,
     orbitalPeriod: 30687,
     color: '#7de8e8',
+    lightColor: lightenColor('#7de8e8', 40),
     speed: 0.012,
     description: 'An ice giant that rotates on its side. Its blue-green color comes from methane in its atmosphere.',
     emoji: '♅',
@@ -106,6 +122,7 @@ const planets: Planet[] = [
     distanceFromSun: 4495,
     orbitalPeriod: 60190,
     color: '#4466ff',
+    lightColor: lightenColor('#4466ff', 40),
     speed: 0.006,
     description: 'The windiest planet with speeds up to 2,100 km/h. It was the first planet found by mathematical prediction.',
     emoji: '♆',
@@ -114,6 +131,7 @@ const planets: Planet[] = [
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const starfieldCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationRef = useRef<number>(0);
   const timeRef = useRef<number>(0);
   const [isPlaying, setIsPlaying] = useState(true);
@@ -123,6 +141,30 @@ export default function App() {
   const planetAnglesRef = useRef<number[]>(planets.map(() => Math.random() * Math.PI * 2));
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
+
+  // Pre-render starfield background into an offscreen canvas whenever canvasSize changes
+  useEffect(() => {
+    const offscreen = document.createElement('canvas');
+    offscreen.width = canvasSize.width;
+    offscreen.height = canvasSize.height;
+    const ctx = offscreen.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = '#0a0a1a';
+      ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
+
+      const starSeed = 42;
+      for (let i = 0; i < 200; i++) {
+        const sx = (starSeed * (i + 1) * 7919) % canvasSize.width;
+        const sy = (starSeed * (i + 1) * 6271) % canvasSize.height;
+        const brightness = 0.3 + ((i * 31) % 70) / 100;
+        ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 0.5 + (i % 3) * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    starfieldCanvasRef.current = offscreen;
+  }, [canvasSize]);
 
   // Handle resize
   useEffect(() => {
@@ -156,20 +198,12 @@ export default function App() {
     const centerX = canvasSize.width / 2;
     const centerY = canvasSize.height / 2;
 
-    // Clear canvas
-    ctx.fillStyle = '#0a0a1a';
-    ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
-
-    // Draw stars
-    const starSeed = 42;
-    for (let i = 0; i < 200; i++) {
-      const sx = ((starSeed * (i + 1) * 7919) % canvasSize.width);
-      const sy = ((starSeed * (i + 1) * 6271) % canvasSize.height);
-      const brightness = 0.3 + ((i * 31) % 70) / 100;
-      ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
-      ctx.beginPath();
-      ctx.arc(sx, sy, 0.5 + (i % 3) * 0.5, 0, Math.PI * 2);
-      ctx.fill();
+    // Draw pre-rendered starfield background
+    if (starfieldCanvasRef.current) {
+      ctx.drawImage(starfieldCanvasRef.current, 0, 0);
+    } else {
+      ctx.fillStyle = '#0a0a1a';
+      ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
     }
 
     // Draw orbit paths
@@ -235,7 +269,7 @@ export default function App() {
         pos.y,
         planetRadius
       );
-      planetGrad.addColorStop(0, lightenColor(planet.color, 40));
+      planetGrad.addColorStop(0, planet.lightColor);
       planetGrad.addColorStop(1, planet.color);
       ctx.fillStyle = planetGrad;
       ctx.beginPath();
@@ -500,12 +534,4 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       <span className="text-white text-sm font-medium">{value}</span>
     </div>
   );
-}
-
-function lightenColor(hex: string, percent: number): string {
-  const num = parseInt(hex.replace('#', ''), 16);
-  const r = Math.min(255, (num >> 16) + percent);
-  const g = Math.min(255, ((num >> 8) & 0x00ff) + percent);
-  const b = Math.min(255, (num & 0x0000ff) + percent);
-  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
 }
