@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 
 interface Planet {
   name: string;
@@ -124,6 +124,28 @@ export default function App() {
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
 
+  // ⚡ Optimization: Pre-generate star base normalized coordinates and properties
+  // so we don't calculate seed math and string formatting inside every 60 FPS frame.
+  const stars = useMemo(() => {
+    const starSeed = 42;
+    return Array.from({ length: 200 }, (_, i) => ({
+      xRatio: ((starSeed * (i + 1) * 7919) % 900) / 900,
+      yRatio: ((starSeed * (i + 1) * 6271) % 900) / 900,
+      fillStyle: `rgba(255, 255, 255, ${0.3 + ((i * 31) % 70) / 100})`,
+      radius: 0.5 + (i % 3) * 0.5,
+    }));
+  }, []);
+
+  // ⚡ Optimization: Pre-compute lightened colors for planets to avoid hex string parsing
+  // and string allocations inside every frame draw call.
+  const planetLightColors = useMemo(() => {
+    const map = new Map<string, string>();
+    planets.forEach((p) => {
+      map.set(p.name, lightenColor(p.color, 40));
+    });
+    return map;
+  }, []);
+
   // Handle resize
   useEffect(() => {
     const handleResize = () => {
@@ -160,15 +182,14 @@ export default function App() {
     ctx.fillStyle = '#0a0a1a';
     ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
 
-    // Draw stars
-    const starSeed = 42;
-    for (let i = 0; i < 200; i++) {
-      const sx = ((starSeed * (i + 1) * 7919) % canvasSize.width);
-      const sy = ((starSeed * (i + 1) * 6271) % canvasSize.height);
-      const brightness = 0.3 + ((i * 31) % 70) / 100;
-      ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
+    // Draw stars (using pre-generated star attributes to eliminate per-frame math & allocations)
+    for (let i = 0; i < stars.length; i++) {
+      const star = stars[i];
+      const sx = star.xRatio * canvasSize.width;
+      const sy = star.yRatio * canvasSize.height;
+      ctx.fillStyle = star.fillStyle;
       ctx.beginPath();
-      ctx.arc(sx, sy, 0.5 + (i % 3) * 0.5, 0, Math.PI * 2);
+      ctx.arc(sx, sy, star.radius, 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -235,7 +256,7 @@ export default function App() {
         pos.y,
         planetRadius
       );
-      planetGrad.addColorStop(0, lightenColor(planet.color, 40));
+      planetGrad.addColorStop(0, planetLightColors.get(planet.name) || planet.color);
       planetGrad.addColorStop(1, planet.color);
       ctx.fillStyle = planetGrad;
       ctx.beginPath();
@@ -259,7 +280,7 @@ export default function App() {
         ctx.fillText(planet.name, pos.x, pos.y - planetRadius - 8 * scale);
       }
     });
-  }, [canvasSize, getScale, getPlanetPosition, hoveredPlanet, selectedPlanet]);
+  }, [canvasSize, getScale, getPlanetPosition, hoveredPlanet, selectedPlanet, stars, planetLightColors]);
 
   // Animation loop
   useEffect(() => {
