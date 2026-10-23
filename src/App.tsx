@@ -8,12 +8,14 @@ interface Planet {
   distanceFromSun: number; // in million km
   orbitalPeriod: number; // in Earth days
   color: string;
+  lightenedColor: string; // precomputed to avoid color calculation in 60fps draw loop
+  glowColor: string; // precomputed color with opacity for hover/select glow
   speed: number; // animation speed multiplier
   description: string;
   emoji: string;
 }
 
-const planets: Planet[] = [
+const rawPlanets = [
   {
     name: 'Mercury',
     radius: 4,
@@ -112,6 +114,13 @@ const planets: Planet[] = [
   },
 ];
 
+// Pre-compute lightened and glow colors once at initialization to eliminate string parsing/formatting in 60fps canvas draw loop
+const planets: Planet[] = rawPlanets.map((planet) => ({
+  ...planet,
+  lightenedColor: lightenColor(planet.color, 40),
+  glowColor: planet.color + '80',
+}));
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>(0);
@@ -123,6 +132,22 @@ export default function App() {
   const planetAnglesRef = useRef<number[]>(planets.map(() => Math.random() * Math.PI * 2));
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
+
+  // Pre-calculate stars once to avoid 200 modulo/string ops per frame in draw loop
+  const starsRef = useRef(
+    Array.from({ length: 200 }, (_, i) => {
+      const starSeed = 42;
+      const xRatio = ((starSeed * (i + 1) * 7919) % 900) / 900;
+      const yRatio = ((starSeed * (i + 1) * 6271) % 900) / 900;
+      const brightness = 0.3 + ((i * 31) % 70) / 100;
+      return {
+        xRatio,
+        yRatio,
+        radius: 0.5 + (i % 3) * 0.5,
+        color: `rgba(255, 255, 255, ${brightness})`,
+      };
+    })
+  );
 
   // Handle resize
   useEffect(() => {
@@ -160,17 +185,15 @@ export default function App() {
     ctx.fillStyle = '#0a0a1a';
     ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
 
-    // Draw stars
-    const starSeed = 42;
-    for (let i = 0; i < 200; i++) {
-      const sx = ((starSeed * (i + 1) * 7919) % canvasSize.width);
-      const sy = ((starSeed * (i + 1) * 6271) % canvasSize.height);
-      const brightness = 0.3 + ((i * 31) % 70) / 100;
-      ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
+    // Draw pre-calculated stars
+    starsRef.current.forEach((star) => {
+      const sx = star.xRatio * canvasSize.width;
+      const sy = star.yRatio * canvasSize.height;
+      ctx.fillStyle = star.color;
       ctx.beginPath();
-      ctx.arc(sx, sy, 0.5 + (i % 3) * 0.5, 0, Math.PI * 2);
+      ctx.arc(sx, sy, star.radius, 0, Math.PI * 2);
       ctx.fill();
-    }
+    });
 
     // Draw orbit paths
     planets.forEach((planet) => {
@@ -218,7 +241,7 @@ export default function App() {
       // Planet glow
       if (isHovered || isSelected) {
         const glowGrad = ctx.createRadialGradient(pos.x, pos.y, planetRadius, pos.x, pos.y, planetRadius * 3);
-        glowGrad.addColorStop(0, planet.color + '80');
+        glowGrad.addColorStop(0, planet.glowColor);
         glowGrad.addColorStop(1, 'transparent');
         ctx.fillStyle = glowGrad;
         ctx.beginPath();
@@ -235,7 +258,7 @@ export default function App() {
         pos.y,
         planetRadius
       );
-      planetGrad.addColorStop(0, lightenColor(planet.color, 40));
+      planetGrad.addColorStop(0, planet.lightenedColor);
       planetGrad.addColorStop(1, planet.color);
       ctx.fillStyle = planetGrad;
       ctx.beginPath();
@@ -371,7 +394,7 @@ export default function App() {
                 <div
                   className="w-12 h-12 rounded-full shadow-lg"
                   style={{
-                    background: `radial-gradient(circle at 30% 30%, ${lightenColor(selectedPlanet.color, 40)}, ${selectedPlanet.color})`,
+                    background: `radial-gradient(circle at 30% 30%, ${selectedPlanet.lightenedColor}, ${selectedPlanet.color})`,
                   }}
                 />
                 <div>
