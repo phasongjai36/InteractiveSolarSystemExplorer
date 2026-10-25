@@ -133,6 +133,21 @@ export default function App() {
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
 
+  // Use refs for interactive planet state so the 60fps draw loop isn't torn down on hover/select
+  const hoveredPlanetRef = useRef<string | null>(null);
+  const selectedPlanetRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    hoveredPlanetRef.current = hoveredPlanet;
+  }, [hoveredPlanet]);
+
+  useEffect(() => {
+    selectedPlanetRef.current = selectedPlanet?.name ?? null;
+  }, [selectedPlanet]);
+
+  // Offscreen canvas for pre-rendering static background, 200 stars, and 8 orbit paths
+  const backgroundCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
   // Pre-calculate stars once to avoid 200 modulo/string ops per frame in draw loop
   const starsRef = useRef(
     Array.from({ length: 200 }, (_, i) => {
@@ -160,6 +175,43 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Pre-render static elements (background, stars, orbit paths) offscreen whenever canvasSize changes
+  useEffect(() => {
+    const offscreen = document.createElement('canvas');
+    offscreen.width = canvasSize.width;
+    offscreen.height = canvasSize.height;
+    const ctx = offscreen.getContext('2d');
+    if (ctx) {
+      const scale = canvasSize.width / 900;
+      const centerX = canvasSize.width / 2;
+      const centerY = canvasSize.height / 2;
+
+      // Draw background
+      ctx.fillStyle = '#0a0a1a';
+      ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
+
+      // Draw pre-calculated stars
+      starsRef.current.forEach((star) => {
+        const sx = star.xRatio * canvasSize.width;
+        const sy = star.yRatio * canvasSize.height;
+        ctx.fillStyle = star.color;
+        ctx.beginPath();
+        ctx.arc(sx, sy, star.radius, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // Draw orbit paths
+      planets.forEach((planet) => {
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, planet.orbitRadius * scale, 0, Math.PI * 2);
+        ctx.stroke();
+      });
+    }
+    backgroundCanvasRef.current = offscreen;
+  }, [canvasSize]);
+
   const getScale = useCallback(() => {
     return canvasSize.width / 900;
   }, [canvasSize]);
@@ -175,34 +227,19 @@ export default function App() {
     return { x, y };
   }, [canvasSize, getScale]);
 
-  // Draw function
+  // Draw function - decoupled from hoveredPlanet/selectedPlanet state to maintain a smooth animation loop
   const draw = useCallback((ctx: CanvasRenderingContext2D) => {
     const scale = getScale();
     const centerX = canvasSize.width / 2;
     const centerY = canvasSize.height / 2;
 
-    // Clear canvas
-    ctx.fillStyle = '#0a0a1a';
-    ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
-
-    // Draw pre-calculated stars
-    starsRef.current.forEach((star) => {
-      const sx = star.xRatio * canvasSize.width;
-      const sy = star.yRatio * canvasSize.height;
-      ctx.fillStyle = star.color;
-      ctx.beginPath();
-      ctx.arc(sx, sy, star.radius, 0, Math.PI * 2);
-      ctx.fill();
-    });
-
-    // Draw orbit paths
-    planets.forEach((planet) => {
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, planet.orbitRadius * scale, 0, Math.PI * 2);
-      ctx.stroke();
-    });
+    // Fast 1-operation draw of pre-rendered background, 200 stars, and orbit paths
+    if (backgroundCanvasRef.current) {
+      ctx.drawImage(backgroundCanvasRef.current, 0, 0);
+    } else {
+      ctx.fillStyle = '#0a0a1a';
+      ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
+    }
 
     // Draw Sun
     const sunRadius = 25 * scale;
@@ -235,8 +272,8 @@ export default function App() {
     planets.forEach((planet, index) => {
       const pos = getPlanetPosition(planet, index);
       const planetRadius = planet.radius * scale;
-      const isHovered = hoveredPlanet === planet.name;
-      const isSelected = selectedPlanet?.name === planet.name;
+      const isHovered = hoveredPlanetRef.current === planet.name;
+      const isSelected = selectedPlanetRef.current === planet.name;
 
       // Planet glow
       if (isHovered || isSelected) {
@@ -282,7 +319,7 @@ export default function App() {
         ctx.fillText(planet.name, pos.x, pos.y - planetRadius - 8 * scale);
       }
     });
-  }, [canvasSize, getScale, getPlanetPosition, hoveredPlanet, selectedPlanet]);
+  }, [canvasSize, getScale, getPlanetPosition]);
 
   // Animation loop
   useEffect(() => {
