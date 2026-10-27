@@ -133,6 +133,10 @@ export default function App() {
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
 
+  // Refs for caching Sun radial gradient object
+  const sunGradientRef = useRef<CanvasGradient | null>(null);
+  const sunGradientParamsRef = useRef<{ centerX: number; centerY: number; sunRadius: number } | null>(null);
+
   // Pre-calculate stars once to avoid 200 modulo/string ops per frame in draw loop
   const starsRef = useRef(
     Array.from({ length: 200 }, (_, i) => {
@@ -206,12 +210,23 @@ export default function App() {
 
     // Draw Sun
     const sunRadius = 25 * scale;
-    const sunGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, sunRadius * 2);
-    sunGradient.addColorStop(0, '#fff7e0');
-    sunGradient.addColorStop(0.3, '#ffdd44');
-    sunGradient.addColorStop(0.6, '#ff9900');
-    sunGradient.addColorStop(1, 'rgba(255, 100, 0, 0)');
-    ctx.fillStyle = sunGradient;
+    // Bolt Optimization: Cache static Sun radial gradient object to avoid allocating a new CanvasGradient every frame in 60fps draw loop
+    if (
+      !sunGradientRef.current ||
+      !sunGradientParamsRef.current ||
+      sunGradientParamsRef.current.centerX !== centerX ||
+      sunGradientParamsRef.current.centerY !== centerY ||
+      sunGradientParamsRef.current.sunRadius !== sunRadius
+    ) {
+      const sunGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, sunRadius * 2);
+      sunGradient.addColorStop(0, '#fff7e0');
+      sunGradient.addColorStop(0.3, '#ffdd44');
+      sunGradient.addColorStop(0.6, '#ff9900');
+      sunGradient.addColorStop(1, 'rgba(255, 100, 0, 0)');
+      sunGradientRef.current = sunGradient;
+      sunGradientParamsRef.current = { centerX, centerY, sunRadius };
+    }
+    ctx.fillStyle = sunGradientRef.current;
     ctx.beginPath();
     ctx.arc(centerX, centerY, sunRadius * 2, 0, Math.PI * 2);
     ctx.fill();
