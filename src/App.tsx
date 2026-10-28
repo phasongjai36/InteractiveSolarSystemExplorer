@@ -128,7 +128,22 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [selectedPlanet, setSelectedPlanet] = useState<Planet | null>(null);
-  const [hoveredPlanet, setHoveredPlanet] = useState<string | null>(null);
+
+  // Performance optimization: Store hovered planet in useRef to prevent full React component
+  // re-renders on every mouse enter/leave over planets.
+  const hoveredPlanetRef = useRef<string | null>(null);
+
+  // Performance optimization: Keep mutable refs for animation loop state to allow the requestAnimationFrame loop
+  // to run continuously without tearing down / restarting on speed changes or play/pause toggles.
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
+
+  const selectedPlanetRef = useRef(selectedPlanet);
+  selectedPlanetRef.current = selectedPlanet;
+
   const planetAnglesRef = useRef<number[]>(planets.map(() => Math.random() * Math.PI * 2));
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
@@ -163,17 +178,6 @@ export default function App() {
   const getScale = useCallback(() => {
     return canvasSize.width / 900;
   }, [canvasSize]);
-
-  const getPlanetPosition = useCallback((planet: Planet, index: number) => {
-    const scale = getScale();
-    const centerX = canvasSize.width / 2;
-    const centerY = canvasSize.height / 2;
-    const angle = planetAnglesRef.current[index];
-    const orbitRadius = planet.orbitRadius * scale;
-    const x = centerX + Math.cos(angle) * orbitRadius;
-    const y = centerY + Math.sin(angle) * orbitRadius;
-    return { x, y };
-  }, [canvasSize, getScale]);
 
   // Draw function
   const draw = useCallback((ctx: CanvasRenderingContext2D) => {
@@ -232,37 +236,45 @@ export default function App() {
     ctx.fill();
 
     // Draw planets
-    planets.forEach((planet, index) => {
-      const pos = getPlanetPosition(planet, index);
+    // Performance optimization: Inline planet coordinate calculation to eliminate 480 object allocations/sec at 60fps
+    const currentHovered = hoveredPlanetRef.current;
+    const currentSelectedName = selectedPlanetRef.current?.name;
+
+    for (let index = 0; index < planets.length; index++) {
+      const planet = planets[index];
+      const angle = planetAnglesRef.current[index];
+      const orbitRadius = planet.orbitRadius * scale;
+      const posX = centerX + Math.cos(angle) * orbitRadius;
+      const posY = centerY + Math.sin(angle) * orbitRadius;
       const planetRadius = planet.radius * scale;
-      const isHovered = hoveredPlanet === planet.name;
-      const isSelected = selectedPlanet?.name === planet.name;
+      const isHovered = currentHovered === planet.name;
+      const isSelected = currentSelectedName === planet.name;
 
       // Planet glow
       if (isHovered || isSelected) {
-        const glowGrad = ctx.createRadialGradient(pos.x, pos.y, planetRadius, pos.x, pos.y, planetRadius * 3);
+        const glowGrad = ctx.createRadialGradient(posX, posY, planetRadius, posX, posY, planetRadius * 3);
         glowGrad.addColorStop(0, planet.glowColor);
         glowGrad.addColorStop(1, 'transparent');
         ctx.fillStyle = glowGrad;
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, planetRadius * 3, 0, Math.PI * 2);
+        ctx.arc(posX, posY, planetRadius * 3, 0, Math.PI * 2);
         ctx.fill();
       }
 
       // Planet body
       const planetGrad = ctx.createRadialGradient(
-        pos.x - planetRadius * 0.3,
-        pos.y - planetRadius * 0.3,
+        posX - planetRadius * 0.3,
+        posY - planetRadius * 0.3,
         0,
-        pos.x,
-        pos.y,
+        posX,
+        posY,
         planetRadius
       );
       planetGrad.addColorStop(0, planet.lightenedColor);
       planetGrad.addColorStop(1, planet.color);
       ctx.fillStyle = planetGrad;
       ctx.beginPath();
-      ctx.arc(pos.x, pos.y, planetRadius * (isHovered ? 1.2 : 1), 0, Math.PI * 2);
+      ctx.arc(posX, posY, planetRadius * (isHovered ? 1.2 : 1), 0, Math.PI * 2);
       ctx.fill();
 
       // Saturn's rings
@@ -270,7 +282,7 @@ export default function App() {
         ctx.strokeStyle = '#f0d89088';
         ctx.lineWidth = 2 * scale;
         ctx.beginPath();
-        ctx.ellipse(pos.x, pos.y, planetRadius * 2, planetRadius * 0.5, 0.3, 0, Math.PI * 2);
+        ctx.ellipse(posX, posY, planetRadius * 2, planetRadius * 0.5, 0.3, 0, Math.PI * 2);
         ctx.stroke();
       }
 
@@ -279,12 +291,12 @@ export default function App() {
         ctx.fillStyle = '#ffffff';
         ctx.font = `${12 * scale}px Arial`;
         ctx.textAlign = 'center';
-        ctx.fillText(planet.name, pos.x, pos.y - planetRadius - 8 * scale);
+        ctx.fillText(planet.name, posX, posY - planetRadius - 8 * scale);
       }
-    });
-  }, [canvasSize, getScale, getPlanetPosition, hoveredPlanet, selectedPlanet]);
+    }
+  }, [canvasSize, getScale]);
 
-  // Animation loop
+  // Animation loop - relies on mutable refs to run uninterrupted across state updates
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -296,11 +308,12 @@ export default function App() {
       const delta = (timestamp - lastTimeRef.current) / 1000;
       lastTimeRef.current = timestamp;
 
-      if (isPlaying) {
-        timeRef.current += delta * speed;
-        planets.forEach((planet, index) => {
-          planetAnglesRef.current[index] += planet.speed * delta * speed * 0.5;
-        });
+      if (isPlayingRef.current) {
+        const currentSpeed = speedRef.current;
+        timeRef.current += delta * currentSpeed;
+        for (let i = 0; i < planets.length; i++) {
+          planetAnglesRef.current[i] += planets[i].speed * delta * currentSpeed * 0.5;
+        }
       }
 
       draw(ctx);
@@ -309,7 +322,7 @@ export default function App() {
 
     animationRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animationRef.current);
-  }, [isPlaying, speed, draw]);
+  }, [draw]);
 
   // Click handler
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -319,11 +332,16 @@ export default function App() {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const scale = getScale();
+    const centerX = canvasSize.width / 2;
+    const centerY = canvasSize.height / 2;
 
     for (let i = planets.length - 1; i >= 0; i--) {
       const planet = planets[i];
-      const pos = getPlanetPosition(planet, i);
-      const dist = Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2);
+      const angle = planetAnglesRef.current[i];
+      const orbitRadius = planet.orbitRadius * scale;
+      const posX = centerX + Math.cos(angle) * orbitRadius;
+      const posY = centerY + Math.sin(angle) * orbitRadius;
+      const dist = Math.hypot(x - posX, y - posY);
       const hitRadius = Math.max(planet.radius * scale * 1.5, 15);
       if (dist <= hitRadius) {
         setSelectedPlanet(selectedPlanet?.name === planet.name ? null : planet);
@@ -341,22 +359,27 @@ export default function App() {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const scale = getScale();
+    const centerX = canvasSize.width / 2;
+    const centerY = canvasSize.height / 2;
 
     let found = false;
     for (let i = planets.length - 1; i >= 0; i--) {
       const planet = planets[i];
-      const pos = getPlanetPosition(planet, i);
-      const dist = Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2);
+      const angle = planetAnglesRef.current[i];
+      const orbitRadius = planet.orbitRadius * scale;
+      const posX = centerX + Math.cos(angle) * orbitRadius;
+      const posY = centerY + Math.sin(angle) * orbitRadius;
+      const dist = Math.hypot(x - posX, y - posY);
       const hitRadius = Math.max(planet.radius * scale * 1.5, 15);
       if (dist <= hitRadius) {
-        setHoveredPlanet(planet.name);
+        hoveredPlanetRef.current = planet.name;
         canvas.style.cursor = 'pointer';
         found = true;
         break;
       }
     }
     if (!found) {
-      setHoveredPlanet(null);
+      hoveredPlanetRef.current = null;
       canvas.style.cursor = 'default';
     }
   };
