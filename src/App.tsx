@@ -128,10 +128,20 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [selectedPlanet, setSelectedPlanet] = useState<Planet | null>(null);
-  const [hoveredPlanet, setHoveredPlanet] = useState<string | null>(null);
+  // Optimization: Use ref for hoveredPlanet to avoid re-rendering entire React component tree on 60fps canvas mouse movements
+  const hoveredPlanetRef = useRef<string | null>(null);
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
+  const selectedPlanetRef = useRef(selectedPlanet);
+  selectedPlanetRef.current = selectedPlanet;
+
   const planetAnglesRef = useRef<number[]>(planets.map(() => Math.random() * Math.PI * 2));
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
+  const canvasSizeRef = useRef(canvasSize);
+  canvasSizeRef.current = canvasSize;
 
   // Pre-calculate stars once to avoid 200 modulo/string ops per frame in draw loop
   const starsRef = useRef(
@@ -161,34 +171,35 @@ export default function App() {
   }, []);
 
   const getScale = useCallback(() => {
-    return canvasSize.width / 900;
-  }, [canvasSize]);
+    return canvasSizeRef.current.width / 900;
+  }, []);
 
   const getPlanetPosition = useCallback((planet: Planet, index: number) => {
     const scale = getScale();
-    const centerX = canvasSize.width / 2;
-    const centerY = canvasSize.height / 2;
+    const centerX = canvasSizeRef.current.width / 2;
+    const centerY = canvasSizeRef.current.height / 2;
     const angle = planetAnglesRef.current[index];
     const orbitRadius = planet.orbitRadius * scale;
     const x = centerX + Math.cos(angle) * orbitRadius;
     const y = centerY + Math.sin(angle) * orbitRadius;
     return { x, y };
-  }, [canvasSize, getScale]);
+  }, [getScale]);
 
-  // Draw function
+  // Draw function - using refs for dynamic state prevents function re-allocations and RAF loop restarts
   const draw = useCallback((ctx: CanvasRenderingContext2D) => {
+    const currentCanvasSize = canvasSizeRef.current;
     const scale = getScale();
-    const centerX = canvasSize.width / 2;
-    const centerY = canvasSize.height / 2;
+    const centerX = currentCanvasSize.width / 2;
+    const centerY = currentCanvasSize.height / 2;
 
     // Clear canvas
     ctx.fillStyle = '#0a0a1a';
-    ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
+    ctx.fillRect(0, 0, currentCanvasSize.width, currentCanvasSize.height);
 
     // Draw pre-calculated stars
     starsRef.current.forEach((star) => {
-      const sx = star.xRatio * canvasSize.width;
-      const sy = star.yRatio * canvasSize.height;
+      const sx = star.xRatio * currentCanvasSize.width;
+      const sy = star.yRatio * currentCanvasSize.height;
       ctx.fillStyle = star.color;
       ctx.beginPath();
       ctx.arc(sx, sy, star.radius, 0, Math.PI * 2);
@@ -231,12 +242,15 @@ export default function App() {
     ctx.arc(centerX, centerY, sunRadius * 3 * glowPulse, 0, Math.PI * 2);
     ctx.fill();
 
+    const currentHovered = hoveredPlanetRef.current;
+    const currentSelected = selectedPlanetRef.current;
+
     // Draw planets
     planets.forEach((planet, index) => {
       const pos = getPlanetPosition(planet, index);
       const planetRadius = planet.radius * scale;
-      const isHovered = hoveredPlanet === planet.name;
-      const isSelected = selectedPlanet?.name === planet.name;
+      const isHovered = currentHovered === planet.name;
+      const isSelected = currentSelected?.name === planet.name;
 
       // Planet glow
       if (isHovered || isSelected) {
@@ -282,9 +296,9 @@ export default function App() {
         ctx.fillText(planet.name, pos.x, pos.y - planetRadius - 8 * scale);
       }
     });
-  }, [canvasSize, getScale, getPlanetPosition, hoveredPlanet, selectedPlanet]);
+  }, [getScale, getPlanetPosition]);
 
-  // Animation loop
+  // Animation loop - stable hook with no unnecessary teardowns when controls or hovered state change
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -296,10 +310,11 @@ export default function App() {
       const delta = (timestamp - lastTimeRef.current) / 1000;
       lastTimeRef.current = timestamp;
 
-      if (isPlaying) {
-        timeRef.current += delta * speed;
+      if (isPlayingRef.current) {
+        const currentSpeed = speedRef.current;
+        timeRef.current += delta * currentSpeed;
         planets.forEach((planet, index) => {
-          planetAnglesRef.current[index] += planet.speed * delta * speed * 0.5;
+          planetAnglesRef.current[index] += planet.speed * delta * currentSpeed * 0.5;
         });
       }
 
@@ -309,7 +324,7 @@ export default function App() {
 
     animationRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animationRef.current);
-  }, [isPlaying, speed, draw]);
+  }, [draw]);
 
   // Click handler
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -349,14 +364,14 @@ export default function App() {
       const dist = Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2);
       const hitRadius = Math.max(planet.radius * scale * 1.5, 15);
       if (dist <= hitRadius) {
-        setHoveredPlanet(planet.name);
+        hoveredPlanetRef.current = planet.name;
         canvas.style.cursor = 'pointer';
         found = true;
         break;
       }
     }
     if (!found) {
-      setHoveredPlanet(null);
+      hoveredPlanetRef.current = null;
       canvas.style.cursor = 'default';
     }
   };
