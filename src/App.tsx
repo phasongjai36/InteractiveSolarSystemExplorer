@@ -133,7 +133,19 @@ export default function App() {
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
 
-  // Pre-calculate stars once to avoid 200 modulo/string ops per frame in draw loop
+  const hoveredPlanetRef = useRef<string | null>(null);
+  hoveredPlanetRef.current = hoveredPlanet;
+
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
+
+  // Offscreen canvas for pre-rendered stars (blitted via single drawImage call per frame)
+  const starsCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Pre-calculate stars data once
   const starsRef = useRef(
     Array.from({ length: 200 }, (_, i) => {
       const starSeed = 42;
@@ -148,6 +160,25 @@ export default function App() {
       };
     })
   );
+
+  // Pre-render background stars to offscreen canvas whenever size changes
+  useEffect(() => {
+    const offscreen = document.createElement('canvas');
+    offscreen.width = canvasSize.width;
+    offscreen.height = canvasSize.height;
+    const ctx = offscreen.getContext('2d');
+    if (ctx) {
+      starsRef.current.forEach((star) => {
+        const sx = star.xRatio * canvasSize.width;
+        const sy = star.yRatio * canvasSize.height;
+        ctx.fillStyle = star.color;
+        ctx.beginPath();
+        ctx.arc(sx, sy, star.radius, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+    starsCanvasRef.current = offscreen;
+  }, [canvasSize]);
 
   // Handle resize
   useEffect(() => {
@@ -185,15 +216,11 @@ export default function App() {
     ctx.fillStyle = '#0a0a1a';
     ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
 
-    // Draw pre-calculated stars
-    starsRef.current.forEach((star) => {
-      const sx = star.xRatio * canvasSize.width;
-      const sy = star.yRatio * canvasSize.height;
-      ctx.fillStyle = star.color;
-      ctx.beginPath();
-      ctx.arc(sx, sy, star.radius, 0, Math.PI * 2);
-      ctx.fill();
-    });
+    // Performance optimization: blit pre-rendered starfield offscreen canvas in 1 drawImage call
+    // instead of 200 arc/fill calls + canvas state mutations every frame
+    if (starsCanvasRef.current) {
+      ctx.drawImage(starsCanvasRef.current, 0, 0);
+    }
 
     // Draw orbit paths
     planets.forEach((planet) => {
@@ -284,7 +311,10 @@ export default function App() {
     });
   }, [canvasSize, getScale, getPlanetPosition, hoveredPlanet, selectedPlanet]);
 
-  // Animation loop
+  const drawRef = useRef(draw);
+  drawRef.current = draw;
+
+  // Animation loop - stable hook with no frame teardown/recreation on state updates
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -296,20 +326,21 @@ export default function App() {
       const delta = (timestamp - lastTimeRef.current) / 1000;
       lastTimeRef.current = timestamp;
 
-      if (isPlaying) {
-        timeRef.current += delta * speed;
-        planets.forEach((planet, index) => {
-          planetAnglesRef.current[index] += planet.speed * delta * speed * 0.5;
-        });
+      if (isPlayingRef.current) {
+        const currentSpeed = speedRef.current;
+        timeRef.current += delta * currentSpeed;
+        for (let i = 0; i < planets.length; i++) {
+          planetAnglesRef.current[i] += planets[i].speed * delta * currentSpeed * 0.5;
+        }
       }
 
-      draw(ctx);
+      drawRef.current(ctx);
       animationRef.current = requestAnimationFrame(animate);
     };
 
     animationRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animationRef.current);
-  }, [isPlaying, speed, draw]);
+  }, []);
 
   // Click handler
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -349,14 +380,21 @@ export default function App() {
       const dist = Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2);
       const hitRadius = Math.max(planet.radius * scale * 1.5, 15);
       if (dist <= hitRadius) {
-        setHoveredPlanet(planet.name);
+        // Prevent redundant state updates on every mousemove event
+        if (hoveredPlanetRef.current !== planet.name) {
+          setHoveredPlanet(planet.name);
+          hoveredPlanetRef.current = planet.name;
+        }
         canvas.style.cursor = 'pointer';
         found = true;
         break;
       }
     }
     if (!found) {
-      setHoveredPlanet(null);
+      if (hoveredPlanetRef.current !== null) {
+        setHoveredPlanet(null);
+        hoveredPlanetRef.current = null;
+      }
       canvas.style.cursor = 'default';
     }
   };
