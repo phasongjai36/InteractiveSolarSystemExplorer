@@ -132,6 +132,8 @@ export default function App() {
   const planetAnglesRef = useRef<number[]>(planets.map(() => Math.random() * Math.PI * 2));
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
+  // Offscreen canvas ref to cache the static background (background clear, 200 stars, 8 orbit rings)
+  const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Pre-calculate stars once to avoid 200 modulo/string ops per frame in draw loop
   const starsRef = useRef(
@@ -148,6 +150,45 @@ export default function App() {
       };
     })
   );
+
+  // Pre-render static background (space background, stars, and planetary orbits) to offscreen canvas
+  // This eliminates ~830 canvas draw commands and fillStyle state switches every animation frame (~50,000 ops/sec)
+  useEffect(() => {
+    const bgCanvas = document.createElement('canvas');
+    bgCanvas.width = canvasSize.width;
+    bgCanvas.height = canvasSize.height;
+    const bgCtx = bgCanvas.getContext('2d');
+    if (!bgCtx) return;
+
+    const scale = canvasSize.width / 900;
+    const centerX = canvasSize.width / 2;
+    const centerY = canvasSize.height / 2;
+
+    // Background clear
+    bgCtx.fillStyle = '#0a0a1a';
+    bgCtx.fillRect(0, 0, canvasSize.width, canvasSize.height);
+
+    // Static stars
+    starsRef.current.forEach((star) => {
+      const sx = star.xRatio * canvasSize.width;
+      const sy = star.yRatio * canvasSize.height;
+      bgCtx.fillStyle = star.color;
+      bgCtx.beginPath();
+      bgCtx.arc(sx, sy, star.radius, 0, Math.PI * 2);
+      bgCtx.fill();
+    });
+
+    // Static planetary orbit paths
+    planets.forEach((planet) => {
+      bgCtx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+      bgCtx.lineWidth = 1;
+      bgCtx.beginPath();
+      bgCtx.arc(centerX, centerY, planet.orbitRadius * scale, 0, Math.PI * 2);
+      bgCtx.stroke();
+    });
+
+    bgCanvasRef.current = bgCanvas;
+  }, [canvasSize]);
 
   // Handle resize
   useEffect(() => {
@@ -181,28 +222,14 @@ export default function App() {
     const centerX = canvasSize.width / 2;
     const centerY = canvasSize.height / 2;
 
-    // Clear canvas
-    ctx.fillStyle = '#0a0a1a';
-    ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
-
-    // Draw pre-calculated stars
-    starsRef.current.forEach((star) => {
-      const sx = star.xRatio * canvasSize.width;
-      const sy = star.yRatio * canvasSize.height;
-      ctx.fillStyle = star.color;
-      ctx.beginPath();
-      ctx.arc(sx, sy, star.radius, 0, Math.PI * 2);
-      ctx.fill();
-    });
-
-    // Draw orbit paths
-    planets.forEach((planet) => {
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, planet.orbitRadius * scale, 0, Math.PI * 2);
-      ctx.stroke();
-    });
+    // Fast blit from pre-rendered offscreen canvas (background + stars + orbits)
+    // Replaces 200 fillStyle changes and ~830 canvas draw commands per frame with 1 drawImage
+    if (bgCanvasRef.current) {
+      ctx.drawImage(bgCanvasRef.current, 0, 0);
+    } else {
+      ctx.fillStyle = '#0a0a1a';
+      ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
+    }
 
     // Draw Sun
     const sunRadius = 25 * scale;
