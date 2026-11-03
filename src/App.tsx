@@ -128,7 +128,9 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [selectedPlanet, setSelectedPlanet] = useState<Planet | null>(null);
-  const [hoveredPlanet, setHoveredPlanet] = useState<string | null>(null);
+  // Track hovered planet in a ref instead of React state to eliminate component re-renders
+  // and avoid tearing down/re-registering the requestAnimationFrame loop during pointer movements.
+  const hoveredPlanetRef = useRef<string | null>(null);
   const planetAnglesRef = useRef<number[]>(planets.map(() => Math.random() * Math.PI * 2));
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
@@ -261,7 +263,7 @@ export default function App() {
     planets.forEach((planet, index) => {
       const pos = getPlanetPosition(planet, index);
       const planetRadius = planet.radius * scale;
-      const isHovered = hoveredPlanet === planet.name;
+      const isHovered = hoveredPlanetRef.current === planet.name;
       const isSelected = selectedPlanet?.name === planet.name;
 
       // Planet glow
@@ -308,7 +310,7 @@ export default function App() {
         ctx.fillText(planet.name, pos.x, pos.y - planetRadius - 8 * scale);
       }
     });
-  }, [canvasSize, getScale, getPlanetPosition, hoveredPlanet, selectedPlanet]);
+  }, [canvasSize, getScale, getPlanetPosition, selectedPlanet]);
 
   // Animation loop
   useEffect(() => {
@@ -375,14 +377,14 @@ export default function App() {
       const dist = Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2);
       const hitRadius = Math.max(planet.radius * scale * 1.5, 15);
       if (dist <= hitRadius) {
-        setHoveredPlanet(planet.name);
+        hoveredPlanetRef.current = planet.name;
         canvas.style.cursor = 'pointer';
         found = true;
         break;
       }
     }
     if (!found) {
-      setHoveredPlanet(null);
+      hoveredPlanetRef.current = null;
       canvas.style.cursor = 'default';
     }
   };
