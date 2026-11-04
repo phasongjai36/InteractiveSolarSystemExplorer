@@ -130,10 +130,28 @@ export default function App() {
   const [selectedPlanet, setSelectedPlanet] = useState<Planet | null>(null);
   const [hoveredPlanet, setHoveredPlanet] = useState<string | null>(null);
   const planetAnglesRef = useRef<number[]>(planets.map(() => Math.random() * Math.PI * 2));
+  const hoveredPlanetRef = useRef<string | null>(null);
+  const selectedPlanetRef = useRef<Planet | null>(null);
+  const speedRef = useRef<number>(speed);
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
   // Cached offscreen canvas holding static background, stars, and orbit rings to avoid ~840 canvas operations per frame at 60fps
   const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Cached static radial gradient for the Sun created once per canvas dimension change
+  const sunGradientRef = useRef<CanvasGradient | null>(null);
+
+  // Keep refs synchronized so 60fps draw loop doesn't recreate callbacks or restart rAF
+  useEffect(() => {
+    hoveredPlanetRef.current = hoveredPlanet;
+  }, [hoveredPlanet]);
+
+  useEffect(() => {
+    selectedPlanetRef.current = selectedPlanet;
+  }, [selectedPlanet]);
+
+  useEffect(() => {
+    speedRef.current = speed;
+  }, [speed]);
 
   // Pre-calculate stars once
   const starsRef = useRef(
@@ -187,6 +205,15 @@ export default function App() {
     });
 
     bgCanvasRef.current = offscreen;
+
+    // Pre-cache static Sun radial gradient to avoid instantiating gradient + 4 color stops 60 times/sec
+    const sunRadius = 25 * scale;
+    const sunGrad = bgCtx.createRadialGradient(centerX, centerY, 0, centerX, centerY, sunRadius * 2);
+    sunGrad.addColorStop(0, '#fff7e0');
+    sunGrad.addColorStop(0.3, '#ffdd44');
+    sunGrad.addColorStop(0.6, '#ff9900');
+    sunGrad.addColorStop(1, 'rgba(255, 100, 0, 0)');
+    sunGradientRef.current = sunGrad;
   }, [canvasSize]);
 
   // Handle resize
@@ -232,12 +259,16 @@ export default function App() {
 
     // Draw Sun
     const sunRadius = 25 * scale;
-    const sunGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, sunRadius * 2);
-    sunGradient.addColorStop(0, '#fff7e0');
-    sunGradient.addColorStop(0.3, '#ffdd44');
-    sunGradient.addColorStop(0.6, '#ff9900');
-    sunGradient.addColorStop(1, 'rgba(255, 100, 0, 0)');
-    ctx.fillStyle = sunGradient;
+    if (sunGradientRef.current) {
+      ctx.fillStyle = sunGradientRef.current;
+    } else {
+      const sunGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, sunRadius * 2);
+      sunGradient.addColorStop(0, '#fff7e0');
+      sunGradient.addColorStop(0.3, '#ffdd44');
+      sunGradient.addColorStop(0.6, '#ff9900');
+      sunGradient.addColorStop(1, 'rgba(255, 100, 0, 0)');
+      ctx.fillStyle = sunGradient;
+    }
     ctx.beginPath();
     ctx.arc(centerX, centerY, sunRadius * 2, 0, Math.PI * 2);
     ctx.fill();
@@ -257,12 +288,15 @@ export default function App() {
     ctx.arc(centerX, centerY, sunRadius * 3 * glowPulse, 0, Math.PI * 2);
     ctx.fill();
 
-    // Draw planets
+    // Draw planets - use refs to decouple animation from React state re-renders
+    const currentHovered = hoveredPlanetRef.current;
+    const currentSelected = selectedPlanetRef.current;
+
     planets.forEach((planet, index) => {
       const pos = getPlanetPosition(planet, index);
       const planetRadius = planet.radius * scale;
-      const isHovered = hoveredPlanet === planet.name;
-      const isSelected = selectedPlanet?.name === planet.name;
+      const isHovered = currentHovered === planet.name;
+      const isSelected = currentSelected?.name === planet.name;
 
       // Planet glow
       if (isHovered || isSelected) {
@@ -308,9 +342,9 @@ export default function App() {
         ctx.fillText(planet.name, pos.x, pos.y - planetRadius - 8 * scale);
       }
     });
-  }, [canvasSize, getScale, getPlanetPosition, hoveredPlanet, selectedPlanet]);
+  }, [canvasSize, getScale, getPlanetPosition]);
 
-  // Animation loop
+  // Animation loop - decoupled from hover state, selection state, and speed changes
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -323,9 +357,10 @@ export default function App() {
       lastTimeRef.current = timestamp;
 
       if (isPlaying) {
-        timeRef.current += delta * speed;
+        const currentSpeed = speedRef.current;
+        timeRef.current += delta * currentSpeed;
         planets.forEach((planet, index) => {
-          planetAnglesRef.current[index] += planet.speed * delta * speed * 0.5;
+          planetAnglesRef.current[index] += planet.speed * delta * currentSpeed * 0.5;
         });
       }
 
@@ -335,7 +370,7 @@ export default function App() {
 
     animationRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animationRef.current);
-  }, [isPlaying, speed, draw]);
+  }, [isPlaying, draw]);
 
   // Click handler
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -375,14 +410,20 @@ export default function App() {
       const dist = Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2);
       const hitRadius = Math.max(planet.radius * scale * 1.5, 15);
       if (dist <= hitRadius) {
-        setHoveredPlanet(planet.name);
+        if (hoveredPlanetRef.current !== planet.name) {
+          hoveredPlanetRef.current = planet.name;
+          setHoveredPlanet(planet.name);
+        }
         canvas.style.cursor = 'pointer';
         found = true;
         break;
       }
     }
     if (!found) {
-      setHoveredPlanet(null);
+      if (hoveredPlanetRef.current !== null) {
+        hoveredPlanetRef.current = null;
+        setHoveredPlanet(null);
+      }
       canvas.style.cursor = 'default';
     }
   };
