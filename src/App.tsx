@@ -128,7 +128,19 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [selectedPlanet, setSelectedPlanet] = useState<Planet | null>(null);
-  const [hoveredPlanet, setHoveredPlanet] = useState<string | null>(null);
+  // Performance optimization: Store hover and playback loop states in refs.
+  // Hover state only affects the 60fps canvas draw routine and is not rendered in React DOM;
+  // using a ref eliminates React re-renders and JSX reconciliations on mousemove.
+  // Keeping refs for selectedPlanet, isPlaying, and speed keeps the requestAnimationFrame
+  // loop stable without cancelling and restarting on state changes.
+  const hoveredPlanetRef = useRef<string | null>(null);
+  const selectedPlanetRef = useRef<Planet | null>(null);
+  selectedPlanetRef.current = selectedPlanet;
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
+
   const planetAnglesRef = useRef<number[]>(planets.map(() => Math.random() * Math.PI * 2));
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
@@ -261,8 +273,8 @@ export default function App() {
     planets.forEach((planet, index) => {
       const pos = getPlanetPosition(planet, index);
       const planetRadius = planet.radius * scale;
-      const isHovered = hoveredPlanet === planet.name;
-      const isSelected = selectedPlanet?.name === planet.name;
+      const isHovered = hoveredPlanetRef.current === planet.name;
+      const isSelected = selectedPlanetRef.current?.name === planet.name;
 
       // Planet glow
       if (isHovered || isSelected) {
@@ -308,7 +320,7 @@ export default function App() {
         ctx.fillText(planet.name, pos.x, pos.y - planetRadius - 8 * scale);
       }
     });
-  }, [canvasSize, getScale, getPlanetPosition, hoveredPlanet, selectedPlanet]);
+  }, [canvasSize, getScale, getPlanetPosition]);
 
   // Animation loop
   useEffect(() => {
@@ -322,10 +334,11 @@ export default function App() {
       const delta = (timestamp - lastTimeRef.current) / 1000;
       lastTimeRef.current = timestamp;
 
-      if (isPlaying) {
-        timeRef.current += delta * speed;
+      if (isPlayingRef.current) {
+        const currentSpeed = speedRef.current;
+        timeRef.current += delta * currentSpeed;
         planets.forEach((planet, index) => {
-          planetAnglesRef.current[index] += planet.speed * delta * speed * 0.5;
+          planetAnglesRef.current[index] += planet.speed * delta * currentSpeed * 0.5;
         });
       }
 
@@ -335,7 +348,7 @@ export default function App() {
 
     animationRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animationRef.current);
-  }, [isPlaying, speed, draw]);
+  }, [draw]);
 
   // Click handler
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -375,15 +388,23 @@ export default function App() {
       const dist = Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2);
       const hitRadius = Math.max(planet.radius * scale * 1.5, 15);
       if (dist <= hitRadius) {
-        setHoveredPlanet(planet.name);
+        hoveredPlanetRef.current = planet.name;
         canvas.style.cursor = 'pointer';
         found = true;
         break;
       }
     }
     if (!found) {
-      setHoveredPlanet(null);
+      hoveredPlanetRef.current = null;
       canvas.style.cursor = 'default';
+    }
+  };
+
+  // Mouse leave handler to clear hover state when cursor leaves canvas
+  const handleMouseLeave = () => {
+    hoveredPlanetRef.current = null;
+    if (canvasRef.current) {
+      canvasRef.current.style.cursor = 'default';
     }
   };
 
@@ -407,6 +428,7 @@ export default function App() {
             height={canvasSize.height}
             onClick={handleCanvasClick}
             onMouseMove={handleMouseMove}
+            onMouseLeave={handleMouseLeave}
             className="rounded-2xl border border-white/10 shadow-2xl shadow-blue-900/20"
           />
         </div>
