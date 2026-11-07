@@ -128,7 +128,9 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [selectedPlanet, setSelectedPlanet] = useState<Planet | null>(null);
-  const [hoveredPlanet, setHoveredPlanet] = useState<string | null>(null);
+  // Store hovered planet in a ref instead of React state to eliminate component re-renders
+  // and avoid recreating the animation loop on every mouse move over canvas
+  const hoveredPlanetRef = useRef<string | null>(null);
   const planetAnglesRef = useRef<number[]>(planets.map(() => Math.random() * Math.PI * 2));
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
@@ -261,7 +263,7 @@ export default function App() {
     planets.forEach((planet, index) => {
       const pos = getPlanetPosition(planet, index);
       const planetRadius = planet.radius * scale;
-      const isHovered = hoveredPlanet === planet.name;
+      const isHovered = hoveredPlanetRef.current === planet.name;
       const isSelected = selectedPlanet?.name === planet.name;
 
       // Planet glow
@@ -308,7 +310,7 @@ export default function App() {
         ctx.fillText(planet.name, pos.x, pos.y - planetRadius - 8 * scale);
       }
     });
-  }, [canvasSize, getScale, getPlanetPosition, hoveredPlanet, selectedPlanet]);
+  }, [canvasSize, getScale, getPlanetPosition, selectedPlanet]);
 
   // Animation loop
   useEffect(() => {
@@ -349,9 +351,11 @@ export default function App() {
     for (let i = planets.length - 1; i >= 0; i--) {
       const planet = planets[i];
       const pos = getPlanetPosition(planet, i);
-      const dist = Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2);
+      const dx = x - pos.x;
+      const dy = y - pos.y;
       const hitRadius = Math.max(planet.radius * scale * 1.5, 15);
-      if (dist <= hitRadius) {
+      // Compare squared distances to avoid Math.sqrt computation
+      if (dx * dx + dy * dy <= hitRadius * hitRadius) {
         setSelectedPlanet(selectedPlanet?.name === planet.name ? null : planet);
         return;
       }
@@ -368,22 +372,26 @@ export default function App() {
     const y = e.clientY - rect.top;
     const scale = getScale();
 
-    let found = false;
+    let hoveredName: string | null = null;
     for (let i = planets.length - 1; i >= 0; i--) {
       const planet = planets[i];
       const pos = getPlanetPosition(planet, i);
-      const dist = Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2);
+      const dx = x - pos.x;
+      const dy = y - pos.y;
       const hitRadius = Math.max(planet.radius * scale * 1.5, 15);
-      if (dist <= hitRadius) {
-        setHoveredPlanet(planet.name);
-        canvas.style.cursor = 'pointer';
-        found = true;
+      // Compare squared distances to avoid Math.sqrt computation
+      if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+        hoveredName = planet.name;
         break;
       }
     }
-    if (!found) {
-      setHoveredPlanet(null);
-      canvas.style.cursor = 'default';
+
+    if (hoveredPlanetRef.current !== hoveredName) {
+      hoveredPlanetRef.current = hoveredName;
+      const newCursor = hoveredName ? 'pointer' : 'default';
+      if (canvas.style.cursor !== newCursor) {
+        canvas.style.cursor = newCursor;
+      }
     }
   };
 
