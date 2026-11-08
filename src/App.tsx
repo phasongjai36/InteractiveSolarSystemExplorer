@@ -128,7 +128,16 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [selectedPlanet, setSelectedPlanet] = useState<Planet | null>(null);
-  const [hoveredPlanet, setHoveredPlanet] = useState<string | null>(null);
+  // Store hovered planet in a ref instead of state to prevent triggering full component re-renders
+  // and tearing down/restarting the rAF loop on every mouse move over canvas planets
+  const hoveredPlanetRef = useRef<string | null>(null);
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
+  const selectedPlanetRef = useRef(selectedPlanet);
+  selectedPlanetRef.current = selectedPlanet;
+
   const planetAnglesRef = useRef<number[]>(planets.map(() => Math.random() * Math.PI * 2));
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
@@ -258,11 +267,14 @@ export default function App() {
     ctx.fill();
 
     // Draw planets
+    const hoveredName = hoveredPlanetRef.current;
+    const selectedName = selectedPlanetRef.current?.name;
+
     planets.forEach((planet, index) => {
       const pos = getPlanetPosition(planet, index);
       const planetRadius = planet.radius * scale;
-      const isHovered = hoveredPlanet === planet.name;
-      const isSelected = selectedPlanet?.name === planet.name;
+      const isHovered = hoveredName === planet.name;
+      const isSelected = selectedName === planet.name;
 
       // Planet glow
       if (isHovered || isSelected) {
@@ -308,34 +320,39 @@ export default function App() {
         ctx.fillText(planet.name, pos.x, pos.y - planetRadius - 8 * scale);
       }
     });
-  }, [canvasSize, getScale, getPlanetPosition, hoveredPlanet, selectedPlanet]);
+  }, [canvasSize, getScale, getPlanetPosition]);
 
-  // Animation loop
+  // Continuous animation loop: reading state via refs prevents tearing down and recreating
+  // requestAnimationFrame on every play/pause, speed change, or selection change
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    let localAnimId = 0;
     const animate = (timestamp: number) => {
       if (!lastTimeRef.current) lastTimeRef.current = timestamp;
       const delta = (timestamp - lastTimeRef.current) / 1000;
       lastTimeRef.current = timestamp;
 
-      if (isPlaying) {
-        timeRef.current += delta * speed;
+      if (isPlayingRef.current) {
+        const curSpeed = speedRef.current;
+        timeRef.current += delta * curSpeed;
         planets.forEach((planet, index) => {
-          planetAnglesRef.current[index] += planet.speed * delta * speed * 0.5;
+          planetAnglesRef.current[index] += planet.speed * delta * curSpeed * 0.5;
         });
       }
 
       draw(ctx);
-      animationRef.current = requestAnimationFrame(animate);
+      localAnimId = requestAnimationFrame(animate);
+      animationRef.current = localAnimId;
     };
 
-    animationRef.current = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(animationRef.current);
-  }, [isPlaying, speed, draw]);
+    localAnimId = requestAnimationFrame(animate);
+    animationRef.current = localAnimId;
+    return () => cancelAnimationFrame(localAnimId);
+  }, [draw]);
 
   // Click handler
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -359,7 +376,8 @@ export default function App() {
     setSelectedPlanet(null);
   };
 
-  // Mouse move handler
+  // Mouse move handler: updates ref instead of React state to avoid React re-renders on hover,
+  // and guards cursor mutations to prevent redundant DOM style writes
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -368,21 +386,29 @@ export default function App() {
     const y = e.clientY - rect.top;
     const scale = getScale();
 
-    let found = false;
+    let foundPlanet: string | null = null;
     for (let i = planets.length - 1; i >= 0; i--) {
       const planet = planets[i];
       const pos = getPlanetPosition(planet, i);
       const dist = Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2);
       const hitRadius = Math.max(planet.radius * scale * 1.5, 15);
       if (dist <= hitRadius) {
-        setHoveredPlanet(planet.name);
-        canvas.style.cursor = 'pointer';
-        found = true;
+        foundPlanet = planet.name;
         break;
       }
     }
-    if (!found) {
-      setHoveredPlanet(null);
+
+    hoveredPlanetRef.current = foundPlanet;
+    const targetCursor = foundPlanet ? 'pointer' : 'default';
+    if (canvas.style.cursor !== targetCursor) {
+      canvas.style.cursor = targetCursor;
+    }
+  };
+
+  const handleMouseLeave = () => {
+    hoveredPlanetRef.current = null;
+    const canvas = canvasRef.current;
+    if (canvas && canvas.style.cursor !== 'default') {
       canvas.style.cursor = 'default';
     }
   };
@@ -407,6 +433,7 @@ export default function App() {
             height={canvasSize.height}
             onClick={handleCanvasClick}
             onMouseMove={handleMouseMove}
+            onMouseLeave={handleMouseLeave}
             className="rounded-2xl border border-white/10 shadow-2xl shadow-blue-900/20"
           />
         </div>
