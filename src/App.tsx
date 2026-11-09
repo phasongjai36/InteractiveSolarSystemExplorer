@@ -128,7 +128,13 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [selectedPlanet, setSelectedPlanet] = useState<Planet | null>(null);
-  const [hoveredPlanet, setHoveredPlanet] = useState<string | null>(null);
+  // Bolt Optimization: Keep hoveredPlanet in a ref rather than React state.
+  // Hover state is only used in the 60fps canvas draw loop and is never rendered in the React JSX tree.
+  // Using a ref eliminates 100% of component re-renders during mouse move/hover transitions and prevents
+  // recreating the draw callback / restarting the requestAnimationFrame loop.
+  const hoveredPlanetRef = useRef<string | null>(null);
+  const selectedPlanetRef = useRef<Planet | null>(null);
+  selectedPlanetRef.current = selectedPlanet;
   const planetAnglesRef = useRef<number[]>(planets.map(() => Math.random() * Math.PI * 2));
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
@@ -261,8 +267,8 @@ export default function App() {
     planets.forEach((planet, index) => {
       const pos = getPlanetPosition(planet, index);
       const planetRadius = planet.radius * scale;
-      const isHovered = hoveredPlanet === planet.name;
-      const isSelected = selectedPlanet?.name === planet.name;
+      const isHovered = hoveredPlanetRef.current === planet.name;
+      const isSelected = selectedPlanetRef.current?.name === planet.name;
 
       // Planet glow
       if (isHovered || isSelected) {
@@ -308,7 +314,7 @@ export default function App() {
         ctx.fillText(planet.name, pos.x, pos.y - planetRadius - 8 * scale);
       }
     });
-  }, [canvasSize, getScale, getPlanetPosition, hoveredPlanet, selectedPlanet]);
+  }, [canvasSize, getScale, getPlanetPosition]);
 
   // Animation loop
   useEffect(() => {
@@ -375,14 +381,14 @@ export default function App() {
       const dist = Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2);
       const hitRadius = Math.max(planet.radius * scale * 1.5, 15);
       if (dist <= hitRadius) {
-        setHoveredPlanet(planet.name);
+        hoveredPlanetRef.current = planet.name;
         canvas.style.cursor = 'pointer';
         found = true;
         break;
       }
     }
     if (!found) {
-      setHoveredPlanet(null);
+      hoveredPlanetRef.current = null;
       canvas.style.cursor = 'default';
     }
   };
