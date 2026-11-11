@@ -128,7 +128,16 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [selectedPlanet, setSelectedPlanet] = useState<Planet | null>(null);
-  const [hoveredPlanet, setHoveredPlanet] = useState<string | null>(null);
+  // Store hovered planet and animation control states in refs to eliminate React re-renders during mousemove
+  // and prevent tearing down / restarting the requestAnimationFrame loop on every state change.
+  const hoveredPlanetRef = useRef<string | null>(null);
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
+  const selectedPlanetRef = useRef(selectedPlanet);
+  selectedPlanetRef.current = selectedPlanet;
+
   const planetAnglesRef = useRef<number[]>(planets.map(() => Math.random() * Math.PI * 2));
   const lastTimeRef = useRef<number>(0);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 800 });
@@ -258,11 +267,14 @@ export default function App() {
     ctx.fill();
 
     // Draw planets
+    const hoveredPlanetName = hoveredPlanetRef.current;
+    const selectedPlanetName = selectedPlanetRef.current?.name;
+
     planets.forEach((planet, index) => {
       const pos = getPlanetPosition(planet, index);
       const planetRadius = planet.radius * scale;
-      const isHovered = hoveredPlanet === planet.name;
-      const isSelected = selectedPlanet?.name === planet.name;
+      const isHovered = hoveredPlanetName === planet.name;
+      const isSelected = selectedPlanetName === planet.name;
 
       // Planet glow
       if (isHovered || isSelected) {
@@ -308,25 +320,29 @@ export default function App() {
         ctx.fillText(planet.name, pos.x, pos.y - planetRadius - 8 * scale);
       }
     });
-  }, [canvasSize, getScale, getPlanetPosition, hoveredPlanet, selectedPlanet]);
+  }, [canvasSize, getScale, getPlanetPosition]);
 
-  // Animation loop
+  // Animation loop - stable across isPlaying/speed/selection changes via refs to prevent RAF thrashing
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    lastTimeRef.current = 0;
+
     const animate = (timestamp: number) => {
       if (!lastTimeRef.current) lastTimeRef.current = timestamp;
       const delta = (timestamp - lastTimeRef.current) / 1000;
       lastTimeRef.current = timestamp;
 
-      if (isPlaying) {
-        timeRef.current += delta * speed;
-        planets.forEach((planet, index) => {
-          planetAnglesRef.current[index] += planet.speed * delta * speed * 0.5;
-        });
+      const currentSpeed = speedRef.current;
+      if (isPlayingRef.current) {
+        timeRef.current += delta * currentSpeed;
+        const deltaFactor = delta * currentSpeed * 0.5;
+        for (let i = 0; i < planets.length; i++) {
+          planetAnglesRef.current[i] += planets[i].speed * deltaFactor;
+        }
       }
 
       draw(ctx);
@@ -335,7 +351,7 @@ export default function App() {
 
     animationRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animationRef.current);
-  }, [isPlaying, speed, draw]);
+  }, [draw]);
 
   // Click handler
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -368,22 +384,24 @@ export default function App() {
     const y = e.clientY - rect.top;
     const scale = getScale();
 
-    let found = false;
+    let matchedPlanet: string | null = null;
     for (let i = planets.length - 1; i >= 0; i--) {
       const planet = planets[i];
       const pos = getPlanetPosition(planet, i);
-      const dist = Math.sqrt((x - pos.x) ** 2 + (y - pos.y) ** 2);
+      const dx = x - pos.x;
+      const dy = y - pos.y;
+      const distSq = dx * dx + dy * dy;
       const hitRadius = Math.max(planet.radius * scale * 1.5, 15);
-      if (dist <= hitRadius) {
-        setHoveredPlanet(planet.name);
-        canvas.style.cursor = 'pointer';
-        found = true;
+      // Compare squared distance to avoid expensive Math.sqrt calculation
+      if (distSq <= hitRadius * hitRadius) {
+        matchedPlanet = planet.name;
         break;
       }
     }
-    if (!found) {
-      setHoveredPlanet(null);
-      canvas.style.cursor = 'default';
+
+    if (hoveredPlanetRef.current !== matchedPlanet) {
+      hoveredPlanetRef.current = matchedPlanet;
+      canvas.style.cursor = matchedPlanet ? 'pointer' : 'default';
     }
   };
 
